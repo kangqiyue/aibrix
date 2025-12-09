@@ -75,7 +75,18 @@ func (n *TreeNode) RemovePodsForModel(model string, podNames []string) {
         delete(n.modelToPods, model)
     }
 }
-	klog.InfoS("Updated mapping for model %s, pod %s in node(%d)", "model", model, "podName", podName, "nodeID", n.id)
+
+func (n *TreeNode) InitAndUpdateModelPod(model string, podName string, timestamp time.Time) {
+    n.mu.Lock()
+    defer n.mu.Unlock()
+    if n.modelToPods == nil {
+        n.modelToPods = make(map[string]map[string]time.Time)
+    }
+    if n.modelToPods[model] == nil {
+        n.modelToPods[model] = make(map[string]time.Time)
+    }
+    n.modelToPods[model][podName] = timestamp
+    klog.InfoS("Updated mapping for model %s, pod %s in node(%d)", "model", model, "podName", podName, "nodeID", n.id)
 }
 
 func (n *TreeNode) GetRefCounter() []int {
@@ -243,9 +254,23 @@ func (n *TreeNode) HasValidPods(currentPodSet map[string]bool) bool {
 }
 
 func (n *TreeNode) GetModelToPodCount() int {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return len(n.modelToPods)
+    n.mu.RLock()
+    defer n.mu.RUnlock()
+    return len(n.modelToPods)
+}
+
+func (n *TreeNode) GetModelToPods() map[string]map[string]time.Time {
+    n.mu.RLock()
+    defer n.mu.RUnlock()
+    copyMap := make(map[string]map[string]time.Time, len(n.modelToPods))
+    for m, pods := range n.modelToPods {
+        podsCopy := make(map[string]time.Time, len(pods))
+        for k, v := range pods {
+            podsCopy[k] = v
+        }
+        copyMap[m] = podsCopy
+    }
+    return copyMap
 }
 
 func (n *TreeNode) GetPodsForModel(model string) map[string]time.Time {

@@ -35,14 +35,14 @@ func Test_ConcurrentMapAccess_Fix(t *testing.T) {
 			case <-done:
 				return
 			default:
-				// Simulate: if modelPods := currentNode.GetPodsForModel(ctx.Model); modelPods != nil { ... }
-				// Accessing parent to match the bug report scenario
-				if node.parent != nil {
-					pods := node.parent.GetPodsForModel(model)
-					for p := range pods {
-						_ = p // Simulate read access
-					}
-				}
+                // Simulate: if modelPods := currentNode.GetPodsForModel(ctx.Model); modelPods != nil { ... }
+                // Access parent via thread-safe getter to avoid races with eviction
+                if parent := node.GetParent(); parent != nil {
+                    pods := parent.GetPodsForModel(model)
+                    for p := range pods {
+                        _ = p // Simulate read access
+                    }
+                }
 			}
 		}
 	}()
