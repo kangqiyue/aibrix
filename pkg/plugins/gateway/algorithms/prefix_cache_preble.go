@@ -459,7 +459,7 @@ func (p *prefixCacheAndLoadRouter) Route(ctx *types.RoutingContext, readyPodList
 	node, matchedTokens, _ := p.cache.AddPrefix(tokens, ctx.Model, "")
 	var matchedPods []*v1.Pod
 	var matchedPodsNames []string
-	if modelPods, ok := node.GetModelToPods()[ctx.Model]; ok {
+	if modelPods := node.GetPodsForModel(ctx.Model); modelPods != nil {
 		readyPodsMap := make(map[string]*v1.Pod)
 		for _, pod := range readyPods {
 			readyPodsMap[pod.Name] = pod
@@ -483,7 +483,7 @@ func (p *prefixCacheAndLoadRouter) Route(ctx *types.RoutingContext, readyPodList
 
 		currentNode := node
 		for currentNode != nil {
-			if modelPods, ok := currentNode.GetModelToPods()[ctx.Model]; ok {
+			if modelPods := currentNode.GetPodsForModel(ctx.Model); modelPods != nil {
 				var nodePods []*v1.Pod
 				for podName := range modelPods {
 					for _, pod := range readyPods {

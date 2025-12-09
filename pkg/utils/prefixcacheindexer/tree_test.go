@@ -1,21 +1,3 @@
-//go:build !race
-
-/*
-Copyright 2024 The Aibrix Team.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-	http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
 package prefixcacheindexer
 
 import (
@@ -174,4 +156,39 @@ func Test_LPRadixCacheConcurrency(t *testing.T) {
 		}
 	}
 	assert.True(t, foundMatchingPod, "Expected to find pod p1 in matched pods")
+}
+
+func Test_ConcurrentEviction(t *testing.T) {
+	cache := NewLPRadixCache(10)
+	model := "m1"
+	pods := []*v1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "p1"}},
+	}
+
+	var wg sync.WaitGroup
+	// Start eviction routine
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			time.Sleep(1 * time.Millisecond)
+			cache.Evict(time.Now())
+		}
+	}()
+
+	// Start read/write routines
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tokens := []int{1, 2, 3, i, 5, 6}
+			for j := 0; j < 10; j++ {
+				cache.AddPrefix(tokens, model, "p1")
+				cache.MatchPrefix(tokens, model, pods)
+				// Access node fields directly via getters if possible to stress test
+				// But we only have public API here.
+			}
+		}(i)
+	}
+	wg.Wait()
 }
