@@ -47,6 +47,35 @@ type TreeNode struct {
 	modelToPods   map[string]map[string]time.Time // model -> {podName -> lastAccessTime}
 }
 
+func (n *TreeNode) SnapshotModelPods() map[string][]string {
+    n.mu.RLock()
+    defer n.mu.RUnlock()
+    result := make(map[string][]string, len(n.modelToPods))
+    for model, podMap := range n.modelToPods {
+        names := make([]string, 0, len(podMap))
+        for pod := range podMap {
+            names = append(names, pod)
+        }
+        result[model] = names
+    }
+    return result
+}
+
+func (n *TreeNode) RemovePodsForModel(model string, podNames []string) {
+    n.mu.Lock()
+    defer n.mu.Unlock()
+    pods, ok := n.modelToPods[model]
+    if !ok {
+        return
+    }
+    for _, name := range podNames {
+        delete(pods, name)
+    }
+    if len(pods) == 0 {
+        delete(n.modelToPods, model)
+    }
+}
+
 func (n *TreeNode) GetModelToPods() map[string]map[string]time.Time {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
@@ -361,8 +390,8 @@ func (c *LPRadixCache) GetNode(tokens []int) *TreeNode {
 }
 
 func (c *LPRadixCache) MatchPrefix(inputTokens []int, model string, pods []*v1.Pod) ([]int, []int, []*v1.Pod) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+    c.mu.RLock()
+    defer c.mu.RUnlock()
 
 	node, matchedTokens := c.matchPrefixHelper(c.rootNode, inputTokens)
 	if node == nil || len(matchedTokens) == 0 {
@@ -371,19 +400,21 @@ func (c *LPRadixCache) MatchPrefix(inputTokens []int, model string, pods []*v1.P
 
 	unmatchedTokens := inputTokens[len(matchedTokens):]
 
-	// Find matching pods
-	var matchedPods []*v1.Pod
-	if modelPods, ok := node.modelToPods[model]; ok {
-		for _, pod := range pods {
-			if _, ok := modelPods[pod.Name]; ok {
-				if matchedPods == nil {
-					matchedPods = make([]*v1.Pod, 0, len(pods))
-				}
-				matchedPods = append(matchedPods, pod)
-				klog.InfoS("Matched pod for node(%d): %s", "nodeID", node.id, "podName", pod.Name)
-			}
-		}
-	}
+    var matchedPods []*v1.Pod
+    node.mu.RLock()
+    modelPods, ok := node.modelToPods[model]
+    if ok {
+        for _, pod := range pods {
+            if _, ok := modelPods[pod.Name]; ok {
+                if matchedPods == nil {
+                    matchedPods = make([]*v1.Pod, 0, len(pods))
+                }
+                matchedPods = append(matchedPods, pod)
+                klog.InfoS("Matched pod for node(%d): %s", "nodeID", node.id, "podName", pod.Name)
+            }
+        }
+    }
+    node.mu.RUnlock()
 	klog.InfoS("MatchPrefix - node(%d) key: %v, matched tokens: %v, model pods: %v", "nodeID", node.id, "key", node.key, "matchedTokens", matchedTokens, "modelToPods", node.modelToPods)
 	return matchedTokens, unmatchedTokens, matchedPods
 }
@@ -539,45 +570,35 @@ func (c *LPRadixCache) collectNodeAndChildren(node *TreeNode) []*TreeNode {
 
 // Fix for evictNode method in tree.go
 func (c *LPRadixCache) evictNode(node *TreeNode) {
-	if node == c.rootNode {
-		return
-	}
+    if node == c.rootNode {
+        return
+    }
 
-	// Clean up pod mappings in parent nodes
-	current := node
-	for parent := node.parent; parent != nil; parent = parent.parent {
-		// Remove this node's pod mappings from parent
-		for model, pods := range current.modelToPods {
-			if parentPods, ok := parent.modelToPods[model]; ok {
-				for podName := range pods {
-					delete(parentPods, podName)
-				}
-				// Remove model mapping if no pods left
-				if len(parentPods) == 0 {
-					delete(parent.modelToPods, model)
-				}
-			}
-		}
-	}
+    current := node
+    snapshot := current.SnapshotModelPods()
+    for parent := node.parent; parent != nil; parent = parent.parent {
+        for model, podNames := range snapshot {
+            parent.RemovePodsForModel(model, podNames)
+        }
+    }
 
-	// Remove node from parent's children
-	if node.parent != nil {
-		delete(node.parent.children, node.key[0])
-	}
+    if node.parent != nil {
+        node.parent.mu.Lock()
+        delete(node.parent.children, node.key[0])
+        node.parent.mu.Unlock()
+    }
 
-	// Remove from allNodes map
-	delete(c.allNodes, node.id)
-	klog.InfoS("Evict node(%d)", "nodeID", node.id)
+    delete(c.allNodes, node.id)
+    klog.InfoS("Evict node(%d)", "nodeID", node.id)
 
-	// Clean up the node's references
-	node.parent = nil
-	node.children = nil
-	node.modelToPods = nil
-	node.evictedPods = nil
-	node.cachedPods = nil
-	node.value = nil
-	node.key = nil
-	node.refCounter = nil
+    node.parent = nil
+    node.children = nil
+    node.modelToPods = nil
+    node.evictedPods = nil
+    node.cachedPods = nil
+    node.value = nil
+    node.key = nil
+    node.refCounter = nil
 }
 
 func (c *LPRadixCache) splitNode(key []int, child *TreeNode, splitLen int) *TreeNode {
