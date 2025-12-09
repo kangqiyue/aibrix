@@ -75,33 +75,6 @@ func (n *TreeNode) RemovePodsForModel(model string, podNames []string) {
         delete(n.modelToPods, model)
     }
 }
-
-func (n *TreeNode) GetModelToPods() map[string]map[string]time.Time {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	// Return a deep copy to prevent data races
-	copyMap := make(map[string]map[string]time.Time, len(n.modelToPods))
-	for m, pods := range n.modelToPods {
-		podsCopy := make(map[string]time.Time, len(pods))
-		for k, v := range pods {
-			podsCopy[k] = v
-		}
-		copyMap[m] = podsCopy
-	}
-	return copyMap
-}
-
-func (n *TreeNode) InitAndUpdateModelPod(model string, podName string, timestamp time.Time) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	if n.modelToPods == nil {
-		n.modelToPods = make(map[string]map[string]time.Time)
-	}
-	if n.modelToPods[model] == nil {
-		n.modelToPods[model] = make(map[string]time.Time)
-	}
-	n.modelToPods[model][podName] = timestamp
 	klog.InfoS("Updated mapping for model %s, pod %s in node(%d)", "model", model, "podName", podName, "nodeID", n.id)
 }
 
@@ -289,32 +262,7 @@ func (n *TreeNode) GetPodsForModel(model string) map[string]time.Time {
 	return nil
 }
 
-func (n *TreeNode) SnapshotModelPods() map[string][]string {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	snapshot := make(map[string][]string)
-	for model, pods := range n.modelToPods {
-		podNames := make([]string, 0, len(pods))
-		for podName := range pods {
-			podNames = append(podNames, podName)
-		}
-		snapshot[model] = podNames
-	}
-	return snapshot
-}
-
-func (n *TreeNode) RemovePodsForModel(model string, podNames []string) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if pods, ok := n.modelToPods[model]; ok {
-		for _, podName := range podNames {
-			delete(pods, podName)
-		}
-		if len(pods) == 0 {
-			delete(n.modelToPods, model)
-		}
-	}
-}
+// SnapshotModelPods and RemovePodsForModel are defined earlier in this file.
 
 func (n *TreeNode) AddOrUpdatePodForModel(model string, podName string, timestamp time.Time) {
 	n.mu.Lock()
